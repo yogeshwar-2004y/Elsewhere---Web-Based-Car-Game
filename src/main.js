@@ -1,7 +1,8 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { World, THEMES } from './world.js';
 import { buildCar, disposeCar } from './cars.js';
-import { CAR_SPECS, clamp, damp, stepVehicle, cruiseInput, randomAt } from './dynamics.js';
+import { CAR_SPECS, clamp, damp, stepVehicle, cruiseInput, randomAt, settleVehicle, surfaceHeight } from './dynamics.js';
 import { Soundscape } from './audio.js';
 import { mountUI, refreshIcons, icon } from './ui.js';
 import './style.css';
@@ -29,7 +30,10 @@ try {
 renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,quality==='high'?1.75:quality==='medium'?1.25:1));
 renderer.shadowMap.enabled=quality!=='low';renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.2;
 $('#scene').append(renderer.domElement);
-const scene=new THREE.Scene();scene.fog=new THREE.Fog(THEMES[theme].fog,200,quality==='low'?760:1300);
+const scene=new THREE.Scene();
+const environmentRoom=new RoomEnvironment(),pmrem=new THREE.PMREMGenerator(renderer);const environmentMap=pmrem.fromScene(environmentRoom,.04);scene.environment=environmentMap.texture;scene.environmentIntensity=.42;environmentRoom.dispose();pmrem.dispose();
+const mirrorTarget=new THREE.WebGLRenderTarget(256,96),mirrorCamera=new THREE.PerspectiveCamera(55,256/96,.15,1100);let mirrorTime=0;
+scene.fog=new THREE.Fog(THEMES[theme].fog,200,quality==='low'?760:1300);
 const camera=new THREE.PerspectiveCamera(48,innerWidth/innerHeight,.1,3500);
 const sun=new THREE.DirectionalLight('#fff1cc',3.1);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-85;sun.shadow.camera.right=85;sun.shadow.camera.top=85;sun.shadow.camera.bottom=-85;sun.shadow.camera.near=1;sun.shadow.camera.far=450;sun.shadow.bias=-.0003;sun.shadow.normalBias=.055;scene.add(sun,sun.target);
 const hemi=new THREE.HemisphereLight('#d3e6e6','#788058',2.5);scene.add(hemi);
@@ -71,11 +75,13 @@ for(let i=0;i<13;i++){
 const world=new World(scene,seed,theme,quality);
 let car=buildCar(carId);scene.add(car.root);
 const state={s:180,x:0,speed:0,heading:0,travelHeading:0,steer:0,distance:0,offroad:false};
-function resetCar(announce=true){state.x=world.road.x(state.s)+2.3;state.heading=world.road.heading(state.s);state.travelHeading=state.heading;state.steer=0;state.speed=0;if(announce)toast('Back on the road. No worries.');}
+function resetCar(announce=true){state.x=world.road.x(state.s)+2.3;state.heading=world.road.heading(state.s);state.speed=0;settleVehicle(state,car.spec,world.road);if(announce)toast('Back on the road. No worries.');}
 resetCar(false);world.update(state.s,origin);
 const keys=new Set(),touch={left:0,right:0,throttle:0,brake:0};
 let cameraReady=false,lastTime=0,elapsed=0,hudTime=0,lightingTime=0,toastTimer,contextLost=false,fpsFrames=0,fpsTime=0,frameRate=60;
-let carY=world.road.y(state.s),pitch=0,roll=0,activeDialog=null,lastFocus=null;
+let carY=world.road.y(state.s),activeDialog=null,lastFocus=null,orbitYaw=0,orbitTilt=0,dragging=false,dragPoint=null;
+const cameraNames=['Chase','Cockpit','Bonnet','Wide'];
+const cameraForward=new THREE.Vector3(),cameraUp=new THREE.Vector3(0,1,0);
 const cameraTarget=new THREE.Vector3(),cameraDesired=new THREE.Vector3(),lookDesired=new THREE.Vector3();
 const dayTop=new THREE.Color(),dayBottom=new THREE.Color(),dayFog=new THREE.Color();
 const nightTop=new THREE.Color('#091526'),nightBottom=new THREE.Color('#374953'),nightFog=new THREE.Color('#273d49');
@@ -97,13 +103,19 @@ function startDrive(){
 }
 function setPause(value){if(!started)return;paused=value;$('#pause-overlay').hidden=!value;$('#pause-btn').innerHTML=icon(value?'play':'pause');$('#pause-btn').setAttribute('aria-label',value?'Resume drive':'Pause drive');refreshIcons();if(!value)sound.start().catch(()=>{});}
 function setAutodrive(value){autodrive=value;$('#cruise-btn').setAttribute('aria-checked',value);if(value&&!started)startDrive();if(started)toast(value?'Autodrive on. Enjoy the view.':'The wheel is yours.');}
+function setCamera(value){cameraMode=Number(value);document.body.classList.toggle('cockpit-view',cameraMode===1);cameraReady=false;orbitYaw=orbitTilt=0;$('#camera-view').value=String(cameraMode);$('#camera-btn').setAttribute('aria-label',`Change camera: ${cameraNames[cameraMode]}`);$('#camera-status').textContent=cameraNames[cameraMode]+' view';if(!started)startDrive();toast(cameraMode===1?'Cockpit · live instruments and rear-view mirror':cameraNames[cameraMode]+' camera');}
 function setNight(value){nightTarget=value?1:0;syncUI();}
 function setTheme(value){if(value===theme)return;theme=value;world.setEnvironment(seed,theme);world.initialized=false;world.update(state.s,origin);sound.theme=theme;resetCar(false);cameraReady=false;syncUI();updateUrl();toast(`${THEMES[theme].name}. A change of scenery.`);}
-function setCar(value){if(value===carId)return;scene.remove(car.root);disposeCar(car);carId=value;car=buildCar(carId);scene.add(car.root);sound.car=carId;syncUI();$('#car-picker').hidden=true;$('#car-btn').setAttribute('aria-expanded','false');toast(CAR_SPECS[carId].subtitle);}
+function setCar(value){if(value===carId)return;scene.remove(car.root);disposeCar(car);carId=value;car=buildCar(carId);scene.add(car.root);settleVehicle(state,car.spec,world.road);cameraReady=false;sound.car=carId;syncUI();$('#car-picker').hidden=true;$('#car-btn').setAttribute('aria-expanded','false');toast(CAR_SPECS[carId].subtitle);}
 function setQuality(value){quality=value;world.quality=value;world.setEnvironment(seed,theme);world.initialized=false;world.update(state.s,origin);renderer.setPixelRatio(Math.min(devicePixelRatio,value==='high'?1.75:value==='medium'?1.25:1));renderer.shadowMap.enabled=value!=='low';sun.shadow.mapSize.set(value==='high'?2048:1024,value==='high'?2048:1024);sun.shadow.map?.dispose();sun.shadow.map=null;save();}
 function openDialog(id){lastFocus=document.activeElement;activeDialog=id;$('#'+id).hidden=false;keys.clear();if(id==='seed-modal')$('#seed-input').value=seed;$('#'+id).querySelector('input,button,select')?.focus();}
 function closeDialog(id){$('#'+id).hidden=true;if(activeDialog===id)activeDialog=null;if(id==='car-picker')$('#car-btn').setAttribute('aria-expanded','false');lastFocus?.focus();}
 $('#start-btn').addEventListener('click',startDrive);
+$('#camera-btn').addEventListener('click',()=>setCamera((cameraMode+1)%4));$('#camera-view').addEventListener('change',e=>setCamera(e.target.value));
+renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Driving view');
+renderer.domElement.addEventListener('pointerdown',e=>{if(activeDialog||cameraMode===1||cameraMode===2)return;dragging=true;dragPoint=[e.clientX,e.clientY];renderer.domElement.setPointerCapture(e.pointerId);});
+renderer.domElement.addEventListener('pointermove',e=>{if(!dragging)return;orbitYaw-= (e.clientX-dragPoint[0])*.006;orbitTilt=clamp(orbitTilt+(e.clientY-dragPoint[1])*.012,-1.5,6);dragPoint=[e.clientX,e.clientY];});
+renderer.domElement.addEventListener('pointerup',()=>dragging=false);renderer.domElement.addEventListener('pointercancel',()=>dragging=false);renderer.domElement.addEventListener('dblclick',()=>{orbitYaw=orbitTilt=0;});
 $('#resume-btn').addEventListener('click',()=>setPause(false));$('#pause-btn').addEventListener('click',()=>setPause(!paused));
 $$('[data-theme]').forEach(b=>b.addEventListener('click',()=>setTheme(b.dataset.theme)));
 $$('[data-car]').forEach(b=>b.addEventListener('click',()=>setCar(b.dataset.car)));
@@ -129,11 +141,11 @@ addEventListener('keydown',e=>{
   if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName))return;
   if(drivingKeys.includes(e.code)||e.code==='Space')e.preventDefault();
   keys.add(e.code);if(e.repeat)return;
-  if(drivingKeys.includes(e.code)){if(!started)startDrive();manualInput();}
+  if(drivingKeys.includes(e.code)||e.code==='ShiftLeft'||e.code==='ShiftRight'){if(!started)startDrive();manualInput();}
   if(e.code==='KeyR')resetCar();
   if(e.code==='KeyF')setAutodrive(!autodrive);
   if(e.code==='KeyN')setNight(!nightTarget);
-  if(e.code==='KeyC'){cameraMode=(cameraMode+1)%3;toast(['Chase camera','Bonnet camera','Wide camera'][cameraMode]);}
+  if(e.code==='KeyC')setCamera((cameraMode+1)%4);
   if(e.code==='KeyM')$('#sound-btn').click();
   if(e.code==='Space'){if(!started)startDrive();else setPause(!paused);}
   if(e.code==='Escape'){if(!$('#car-picker').hidden)closeDialog('car-picker');else if(started)setPause(!paused);}
@@ -150,9 +162,10 @@ function getInput(){
   let steer=Number(keys.has('KeyD')||keys.has('ArrowRight'))-Number(keys.has('KeyA')||keys.has('ArrowLeft'))+touch.right-touch.left;
   let throttle=Number(keys.has('KeyW')||keys.has('ArrowUp'))||touch.throttle;
   let brake=Number(keys.has('KeyS')||keys.has('ArrowDown'))||touch.brake;
-  const gamepad=navigator.getGamepads?.()?.[0];
-  if(gamepad){const axis=gamepad.axes[0]||0;if(Math.abs(axis)>.12)steer=axis;throttle=Math.max(throttle,gamepad.buttons[7]?.value||0);brake=Math.max(brake,gamepad.buttons[6]?.value||0);if(Math.abs(axis)>.2||throttle>.1||brake>.1){manualInput();if(!started)startDrive();}const buttons=gamepad.buttons.map(b=>b.pressed);if(buttons[0]&&!padButtons[0])resetCar();if(buttons[3]&&!padButtons[3])setAutodrive(!autodrive);if(buttons[9]&&!padButtons[9])setPause(!paused);padButtons=buttons;}
-  return {steer:clamp(steer,-1,1),throttle,brake};
+  let handbrake=Number(keys.has('ShiftLeft')||keys.has('ShiftRight'));
+  const gamepad=Array.from(navigator.getGamepads?.()||[]).find(Boolean);
+  if(gamepad){const axis=gamepad.axes[0]||0;if(Math.abs(axis)>.12)steer=axis;throttle=Math.max(throttle,gamepad.buttons[7]?.value||0);brake=Math.max(brake,gamepad.buttons[6]?.value||0);if(Math.abs(axis)>.2||throttle>.1||brake>.1){manualInput();if(!started)startDrive();}const buttons=gamepad.buttons.map(b=>b.pressed);handbrake=Math.max(handbrake,gamepad.buttons[1]?.value||0);if(handbrake)manualInput();if(buttons[2]&&!padButtons[2])setCamera((cameraMode+1)%4);if(buttons[0]&&!padButtons[0])resetCar();if(buttons[3]&&!padButtons[3])setAutodrive(!autodrive);if(buttons[9]&&!padButtons[9])setPause(!paused);padButtons=buttons;}
+  return {steer:clamp(steer,-1,1),throttle,brake,handbrake};
 }
 function lighting(dt){
   night=damp(night,nightTarget,reducedMotion?12:.85,dt);const p=THEMES[theme];
@@ -162,45 +175,67 @@ function lighting(dt){
   sun.color.set(p.light).lerp(new THREE.Color('#a7c4e0'),night);sun.intensity=3.1*(1-night)+.47*night;
   hemi.color.set('#d1e4df').lerp(new THREE.Color('#7496b3'),night);hemi.groundColor.set('#889264').lerp(new THREE.Color('#364658'),night);hemi.intensity=2.4*(1-night)+.65*night;
   ridgeMaterial.color.set('#ffffff').lerp(new THREE.Color('#283d51'),night);ridges.visible=theme==='alpine';renderer.toneMappingExposure=1.13-night*.16;cloudMaterial.opacity=.28*(1-night)+.035*night;stars.material.opacity=night;moon.material.opacity=night;
-  car.beams.forEach(b=>b.intensity=night*120);
+  scene.environmentIntensity=.42-night*.31;car.beams.forEach(b=>b.intensity=night*125);
   lightingTime+=dt;if(lightingTime>.2){world.setNight(night);lightingTime=0;}
 }
 function updateView(dt,input){
-  const road=world.road, s=state.s;
-  const onRoad=Math.abs(state.x-road.x(s))<6;
-  const targetY=onRoad?road.y(s)+.055:road.terrain(state.x,s)+.13;
-  carY=damp(carY,targetY,12,dt);
-  const stride=1.3,dx=Math.sin(state.heading)*stride,ds=Math.cos(state.heading)*stride;
-  const front=onRoad?road.y(s+ds):road.terrain(state.x+dx,s+ds);
-  const back=onRoad?road.y(s-ds):road.terrain(state.x-dx,s-ds);
-  pitch=damp(pitch,clamp(Math.atan2(front-back,stride*2),-.5,.5),car.spec.suspension,dt);
-  roll=damp(roll,reducedMotion?0:-state.steer*Math.min(Math.abs(state.speed)*.0035,.12)*(carId==='bmw'?1.5:1),car.spec.suspension,dt);
-  car.root.position.set(state.x,carY,-(s-origin));car.root.rotation.set(pitch,-state.heading,0,'YXZ');car.body.rotation.z=roll;
-  car.body.rotation.x=damp(car.body.rotation.x,reducedMotion?0:input.throttle*.012-input.brake*.026,5,dt);
-  const bob=state.offroad&&!reducedMotion?Math.sin(elapsed*21)*Math.min(Math.abs(state.speed)*.0008,.025):0;car.body.position.y=bob;
-  car.wheels.forEach(w=>{if(w.front)w.pivot.rotation.y=-state.steer*.36;if(!paused&&!activeDialog&&started){w.tire.rotateY(-state.speed*dt/.36);w.hub.rotateY(-state.speed*dt/.36);}});
-  const heading=state.heading;const backX=-Math.sin(heading),backZ=Math.cos(heading);
-  let distance=cameraMode===2?20:11.8,height=cameraMode===2?8:4.5,ahead=cameraMode===2?11:9;
-  if(!started){distance=16;height=5.7;ahead=19;}
-  if(cameraMode===1&&started){distance=-1.35;height=1.4+Math.sin(pitch)*1.35;ahead=22;}
-  const side=!started?(innerWidth<620?0:7):0;
-  cameraDesired.set(state.x+backX*distance+Math.cos(heading)*side,carY+height,-(s-origin)+backZ*distance+Math.sin(heading)*side);
-  const cameraS=origin-cameraDesired.z;
-  if(cameraMode!==1)cameraDesired.y=Math.max(cameraDesired.y,road.terrain(cameraDesired.x,cameraS)+1.6);
-  lookDesired.set(state.x+Math.sin(heading)*ahead,carY+(cameraMode===1?1.35:1.2),-(s-origin)-Math.cos(heading)*ahead);
-  if(!cameraReady||(cameraMode===1&&started)){camera.position.copy(cameraDesired);cameraTarget.copy(lookDesired);cameraReady=true;}else{camera.position.lerp(cameraDesired,1-Math.exp(-dt*(reducedMotion?20:4)));cameraTarget.lerp(lookDesired,1-Math.exp(-dt*5));}
-  camera.lookAt(cameraTarget);camera.fov=damp(camera.fov,48+(cameraMode===1?5:0)+(reducedMotion?0:Math.min(Math.abs(state.speed)*.07,5)),2,dt);camera.updateProjectionMatrix();
+  const road=world.road,s=state.s;
+  carY=state.heave??road.y(s);
+  car.root.position.set(state.x,carY,-(s-origin));car.root.rotation.set(0,-state.heading,0);
+  car.body.rotation.set(reducedMotion?(state.groundPitch||0):(state.pitch||0),0,reducedMotion?(state.groundRoll||0):(state.roll||0),'YXZ');
+  car.wheels.forEach((w,i)=>{
+    const contact=state.contacts?.[i];w.pivot.position.y=(contact?contact.height-carY:0)+w.radius;
+    const angle=state.steeringAngle||0,radius=car.spec.wheelbase/Math.max(Math.abs(Math.tan(angle)),.0001);
+    const ackermann=Math.sign(angle)*Math.atan(car.spec.wheelbase/Math.max(.4,radius-w.side*Math.sign(angle)*car.spec.track/2));
+    w.pivot.rotation.set(state.groundPitch||0,w.front?-ackermann:0,state.groundRoll||0,'YXZ');w.spin.rotation.x=state.wheelRotation||0;
+  });
+  car.shadow.position.y=.025;car.shadow.rotation.set(-Math.PI/2+(state.groundPitch||0),0,state.groundRoll||0);
+  car.materials.tail.emissiveIntensity=.35+night*.7+Math.max(state.brake||0,state.handbrake||0)*3.5;
+  car.materials.headlight.emissiveIntensity=.35+night*3;
+  car.windows.visible=!(started&&(cameraMode===1||cameraMode===2));
+  car.cockpit.update(state,night,elapsed);
+  car.root.updateMatrixWorld(true);
+  const locked=started&&(cameraMode===1||cameraMode===2);
+  if(locked){
+    const anchor=cameraMode===1?car.cockpit.eye:car.cockpit.bonnet;anchor.getWorldPosition(cameraDesired);
+    cameraForward.set(0,cameraMode===1?-.035:-.10,-1).applyQuaternion(car.body.getWorldQuaternion(new THREE.Quaternion()));
+    lookDesired.copy(cameraDesired).addScaledVector(cameraForward,30);
+    cameraUp.set(0,1,0).applyQuaternion(car.body.getWorldQuaternion(new THREE.Quaternion()));camera.up.copy(cameraUp);
+    camera.position.copy(cameraDesired);cameraTarget.copy(lookDesired);cameraReady=true;
+  }else{
+    camera.up.set(0,1,0);
+    const h=state.heading+orbitYaw,backX=-Math.sin(h),backZ=Math.cos(h);
+    const distance=!started?11.7:cameraMode===3?19:9.1;
+    const height=(!started?4.3:cameraMode===3?7.3:3.1)+orbitTilt;
+    const ahead=(!started?10:cameraMode===3?8:5)*Math.max(0,Math.cos(orbitYaw));
+    const side=!started?(innerWidth<620?0:4.5):0;
+    cameraDesired.set(state.x+backX*distance+Math.cos(h)*side,carY+height,-(s-origin)+backZ*distance+Math.sin(h)*side);
+    cameraDesired.y=Math.max(cameraDesired.y,surfaceHeight(road,cameraDesired.x,origin-cameraDesired.z)+.9);
+    lookDesired.set(state.x+Math.sin(state.heading)*ahead,carY+1.0,-(s-origin)-Math.cos(state.heading)*ahead);
+    if(!cameraReady){camera.position.copy(cameraDesired);cameraTarget.copy(lookDesired);cameraReady=true;}
+    else{camera.position.lerp(cameraDesired,1-Math.exp(-dt*(reducedMotion?24:6)));cameraTarget.lerp(lookDesired,1-Math.exp(-dt*7));}
+  }
+  camera.lookAt(cameraTarget);
+  const targetFov=locked?(cameraMode===1?67:60):49+(reducedMotion?0:Math.min(Math.abs(state.speed)*.06,4));
+  camera.fov=damp(camera.fov,targetFov,7,dt);camera.updateProjectionMatrix();
   ridges.position.set(state.x,0,-(s-origin));sky.position.copy(camera.position);stars.position.copy(camera.position);moon.position.copy(camera.position).add(new THREE.Vector3(560,330,-1550));clouds.position.set(state.x,0,-(s-origin));
   sun.position.set(state.x-75,carY+125,-(s-origin)-85);sun.target.position.set(state.x,carY,-(s-origin)-12);
+  mirrorTime+=dt;
+  if(cameraMode===1&&started&&mirrorTime>.12){
+    mirrorTime=0;car.cockpit.mirrorMaterial.map=mirrorTarget.texture;car.cockpit.mirrorMaterial.needsUpdate=true;
+    mirrorCamera.position.set(state.x-Math.sin(state.heading)*2.25,carY+1.45,-(s-origin)+Math.cos(state.heading)*2.25);
+    mirrorCamera.lookAt(state.x-Math.sin(state.heading)*42,carY+1.35,-(s-origin)+Math.cos(state.heading)*42);
+    car.root.visible=false;renderer.setRenderTarget(mirrorTarget);renderer.render(scene,mirrorCamera);renderer.setRenderTarget(null);car.root.visible=true;
+  }
 }
 function animate(now){
   requestAnimationFrame(animate);if(contextLost)return;
   const rawDt=lastTime?(now-lastTime)/1000:1/60;const dt=Math.min(rawDt,.05);lastTime=now;fpsFrames++;fpsTime+=rawDt;if(fpsTime>=1){frameRate=fpsFrames/fpsTime;fpsFrames=0;fpsTime=0;}if(document.hidden)return;elapsed+=dt;
-  let input=activeDialog?{steer:0,throttle:0,brake:0}:getInput();if(autodrive)input=cruiseInput(state,world.road);
+  let input=activeDialog?{steer:0,throttle:0,brake:0}:getInput();if(autodrive)input=cruiseInput(state,world.road,car.spec);
   if(started&&!paused&&!activeDialog){const steps=Math.max(1,Math.ceil(dt/(1/120)));for(let i=0;i<steps;i++)stepVehicle(state,input,car.spec,world.road,dt/steps);}
   const nextOrigin=Math.floor(state.s/1600)*1600;if(nextOrigin!==origin){const delta=nextOrigin-origin;camera.position.z+=delta;cameraTarget.z+=delta;origin=nextOrigin;}
-  world.update(state.s,origin,state.x);lighting(dt);updateView(dt,input);sound.update(state.speed,input.throttle,elapsed,night>.5,paused||!!activeDialog||!started);
-  hudTime+=dt;if(hudTime>.1){$('#speed').textContent=Math.round(Math.abs(state.speed)*3.6);$('#distance').innerHTML=(state.distance/1000).toFixed(1)+' <span>km</span>';hudTime=0;if(import.meta.env.DEV)renderer.domElement.dataset.diagnostics=JSON.stringify({fps:Math.round(frameRate),speed:state.speed,distance:state.distance,offroad:state.offroad,s:state.s,x:state.x,roadX:world.road.x(state.s),origin,chunks:world.chunks.size,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures,paused,autodrive,quality,car:carId,theme});}
+  world.update(state.s,origin,state.x);lighting(dt);updateView(dt,input);sound.update(state,elapsed,night>.5,paused||!!activeDialog||!started);
+  hudTime+=dt;if(hudTime>.1){$('#speed').textContent=Math.round(Math.abs(state.speed)*3.6);$('#gear').textContent=state.gear===-1?'R':String(state.gear||1);$('#rpm').textContent=Math.round((state.rpm||car.spec.idle)/100)*100;$('#rev-fill').style.width=clamp((state.rpm||0)/car.spec.redline*100,0,100)+'%';$('#distance').innerHTML=(state.distance/1000).toFixed(1)+' <span>km</span>';hudTime=0;if(import.meta.env.DEV)renderer.domElement.dataset.diagnostics=JSON.stringify({fps:Math.round(frameRate),speed:state.speed,rpm:state.rpm,gear:state.gear,steeringAngle:state.steeringAngle,pitch:state.pitch,roll:state.roll,camera:cameraNames[cameraMode],distance:state.distance,offroad:state.offroad,s:state.s,x:state.x,roadX:world.road.x(state.s),origin,chunks:world.chunks.size,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures,paused,autodrive,quality,car:carId,theme});}
   renderer.render(scene,camera);
 }
 addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});

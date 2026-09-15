@@ -24,9 +24,10 @@ export class Soundscape {
     this.bird=ctx.createOscillator();this.bird.type='sine';this.birdGain=ctx.createGain();this.birdGain.gain.value=0;this.bird.connect(this.birdGain);this.birdGain.connect(this.master);this.bird.start();
     await ctx.resume();
   }
-  update(speed,throttle,time,night,paused=false) {
+  update(state,time,night,paused=false) {
+    const speed=state.speed,throttle=state.throttle||0;
     if(!this.context)return;const t=this.context.currentTime;const spec=CAR_SPECS[this.car];
-    const rpm=850+(Math.abs(speed)*110%4400)+throttle*400;const voice=VOICES[this.car];
+    const rpm=state.rpm||spec.idle;const voice=VOICES[this.car];
     if(this.lastVoice!==this.car){this.oscillators.forEach((o,i)=>o.type=voice.waves[i]);this.lastVoice=this.car;}
     this.oscillators.forEach((o,i)=>o.frequency.setTargetAtTime(spec.note*(rpm/1100)*voice.ratios[i],t,.13));
     this.engineGain.gain.setTargetAtTime((paused?.006:.012+throttle*.018+Math.abs(speed)*.00025)*voice.gain,t,.15);

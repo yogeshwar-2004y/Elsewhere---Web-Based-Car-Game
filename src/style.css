@@ -18,3 +18,14 @@
 .playing .scene-shade:before{display:none}
 
 @media(max-width:620px){.playing .touch-controls{display:flex;bottom:120px}.playing .keyboard-hint{display:none}.playing .bottom-bar{bottom:34px}.playing .car-picker{bottom:105px}.playing .toast{bottom:191px}}
+
+/* Keep the vehicle controls and powertrain information quiet and readable. */
+.powertrain{position:absolute;left:0;top:48px;font-size:8px;line-height:1.4;width:94px;letter-spacing:.35px;color:#e7eed8b0;text-shadow:none}.powertrain b{font-size:10px;font-weight:600;color:#f3f3df;padding-right:8px}.rev-track{height:2px;background:#dae5bf26;margin-top:5px;border-radius:3px;overflow:hidden}.rev-track i{height:100%;display:block;background:#c8d8a0;transition:width .12s linear}
+#camera-status{position:absolute;top:21px;left:50%;transform:translateX(-50%);font-size:8px;letter-spacing:1.1px;opacity:.62;text-transform:uppercase}
+.car-spec-line{font-size:6.5px!important;letter-spacing:.6px;margin-top:7px!important}.car-picker{width:315px}.car-option{padding:15px 10px}.car-option>span:nth-child(2){flex:1}.car-option small{font-size:9px}
+#scene canvas{touch-action:none;outline:none;cursor:grab}#scene canvas:active{cursor:grabbing}
+@media(max-width:620px){.powertrain{top:38px;width:68px;font-size:6px}.powertrain b{font-size:8px}.rev-track{margin-top:3px}#camera-status{top:18px;font-size:7px}.car-picker{max-width:calc(100vw - 40px)}.top-actions{gap:2px}.top-actions .icon-button{width:30px;height:32px}.top-actions .nav-divider{margin:0 2px}.topbar{padding-left:20px;padding-right:18px}.brand{font-size:25px;gap:8px}}
+
+.cockpit-view .topbar{color:#e3e8d9;text-shadow:0 1px 8px #13251c77}.cockpit-view .top-motto{opacity:.8}.cockpit-view .drive-label{color:#e7eddc;text-shadow:0 1px 8px #14201888}.cockpit-view .scene-shade{opacity:.1}
+
+.cockpit-view .drive-hud .speed,.cockpit-view .drive-hud .hud-divider,.cockpit-view .drive-hud .distance,.cockpit-view .keyboard-hint{display:none}.cockpit-view .drive-hud{left:auto;right:180px;transform:none}.cockpit-view .bottom-bar{bottom:30px}.cockpit-view .drive-hud .icon-button{background:#21352bdd}.cockpit-view .toast{bottom:100px}@media(max-width:620px){.cockpit-view .drive-hud{right:61px}.cockpit-view .toast{bottom:188px}}
