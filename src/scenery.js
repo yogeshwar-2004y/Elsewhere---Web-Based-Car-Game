@@ -34,7 +34,7 @@ export function resolveVegetation(state,spec,plants,onYield=()=>{}) {
       onYield(plant,Math.sin(state.travelHeading)*Math.sign(state.speed),Math.cos(state.travelHeading)*Math.sign(state.speed),Math.abs(state.speed));contacts++;continue;
     }
     if(distance<.0001){nx=-forwardX;ns=-forwardS;}else{nx/=distance;ns/=distance;}
-    state.x+=nx*(radius-distance+.002);state.s+=ns*(radius-distance+.002);
+    state.x+=nx*(radius-distance+.00001);state.s+=ns*(radius-distance+.00001);
     let vx=Math.sin(state.travelHeading)*state.speed,vs=Math.cos(state.travelHeading)*state.speed;
     const inward=vx*nx+vs*ns;
     if(inward<0){

@@ -23,3 +23,22 @@ test('terrain also streams for distant off-road exploration and cleans up on ret
   const world=new World(new THREE.Scene(),'explore','desert','low');for(let i=0;i<30;i++)world.update(180,0,4500);
   assert.equal(world.exploration.size,25);world.update(180,0,world.road.x(180));assert.equal(world.exploration.size,0);world.clear();
 });
+
+test('coastal water is one level continuous surface across chunks and origin shifts',()=>{
+  const scene=new THREE.Scene(),world=new World(scene,'coast-check','coastal','low');world.update(180,0);
+  const sea=world.sea;assert.ok(sea);assert.equal(sea.position.y,world.road.seaLevel);
+  for(let s=-3000;s<3000;s+=31){const shore=world.road.coast(s);assert.equal(world.road.terrain(shore,s),world.road.seaLevel);assert.ok(world.road.terrain(shore-20,s)<world.road.seaLevel);assert.ok(world.road.terrain(shore+15,s)>world.road.seaLevel);}
+  world.update(3300,3200);assert.equal(world.sea,sea);assert.equal(sea.position.y,-3);assert.equal(scene.children.filter(o=>o.name==='continuous-ocean').length,1);
+  world.setEnvironment('coast-check','desert');assert.equal(world.sea,null);assert.ok(!scene.children.includes(sea));world.clear();
+});
+test('physics and vegetation sample the same triangles visible in the terrain mesh',()=>{
+  for(const theme of ['alpine','desert','coastal']){
+    const world=new World(new THREE.Scene(),'ground-check',theme,'low');world.update(40,0);world.root.updateMatrixWorld(true);
+    const mesh=world.chunks.get(0).children[0];
+    for(const s of [12.3,57.8,119.1])for(const offset of [-33,21,94]){
+      const x=world.road.x(s)+offset,ray=new THREE.Raycaster(new THREE.Vector3(x,1000,-s),new THREE.Vector3(0,-1,0));
+      const hit=ray.intersectObject(mesh)[0];assert.ok(hit);assert.ok(Math.abs(hit.point.y-world.road.ground(x,s))<.0001,`${theme}: ${hit.point.y} vs ${world.road.ground(x,s)}`);
+    }
+    world.clear();
+  }
+});

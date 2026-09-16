@@ -73,7 +73,7 @@ function details(body,b,spec,m,width,front,rear,belt) {
   const frontPlate=b.label(body,'ELSEWHERE',[0,.38,front-.024],.31,.074,{background:'#dedccb',color:'#34423b',font:'600 56px sans-serif'});frontPlate.rotation.y=Math.PI;
 }
 function buildBMW(body,b,spec,m) {
-  b.bodyShell(body,m.paint,[[-2.09,.70,.29,.71,.74],[-1.88,.80,.29,.86,.89],[-1.35,.835,.28,.91,.94],[-.80,.815,.28,.91,.92],[.80,.82,.28,.91,.93],[1.39,.835,.28,.90,.94],[1.94,.80,.30,.85,.87],[2.08,.72,.33,.74,.79]],spec,[-.84,1.19]);
+  b.bodyShell(body,m.paint,[[-2.09,.78,.29,.86,.91],[-1.88,.80,.29,.88,.92],[-1.35,.835,.28,.91,.94],[-.80,.815,.28,.91,.92],[.80,.82,.28,.91,.93],[1.39,.835,.28,.90,.94],[1.94,.80,.30,.85,.87],[2.08,.78,.33,.85,.89]],spec,[-.84,1.19]);
   const windows=glazing(body,b,m,{id:'bmw',frontZ:-.88,frontY:.93,frontW:.73,topFront:-.37,topRear:.72,roofY:1.395,roofW:.63,rearZ:1.20,rearY:.94,rearW:.72});
   b.box(body,m.black,[0,.697,-2.087],[1.48,.23,.031],.025);
   for(const side of [-1,1]) {
@@ -102,8 +102,9 @@ function buildLamborghini(body,b,spec,m) {
   const windows=glazing(body,b,m,{id:'lamborghini',frontZ:-1.07,frontY:.80,frontW:.80,topFront:-.42,topRear:.52,roofY:1.16,roofW:.665,rearZ:1.15,rearY:.86,rearW:.74});
   for(const side of [-1,1]) {
     b.panel(body,m.black,[[side*.39,.35,-2.265],[side*.93,.37,-2.17],[side*.86,.57,-2.18],[side*.46,.52,-2.29]]);
-    b.path(body,m.headlight,[[side*.49,.660,-2.08],[side*.70,.682,-1.98],[side*.85,.73,-1.78]],.014);
-    b.path(body,m.headlight,[[side*.70,.682,-1.98],[side*.77,.64,-2.10]],.012);
+    b.panel(body,m.black,[[side*.43,.642,-2.10],[side*.76,.633,-2.12],[side*.89,.706,-1.75],[side*.78,.698,-1.75]]);
+    b.path(body,m.headlight,[[side*.49,.646,-2.08],[side*.70,.667,-1.98],[side*.85,.707,-1.78]],.009);
+    b.path(body,m.headlight,[[side*.70,.667,-1.98],[side*.75,.641,-2.09]],.008);
     b.path(body,m.gap,[[side*.37,.615,-2.04],[side*.36,.77,-1.17],[side*.53,.816,-.84]],.007);
     b.panel(body,m.black,[[side*.991,.43,.83],[side*1.016,.75,1.02],[side*.965,.79,.30],[side*.961,.54,.31]]);
     b.beam(body,m.paint,[side*.982,.42,.86],[side*.974,.77,.31],.035,5);
@@ -129,8 +130,13 @@ function buildPorsche(body,b,spec,m) {
   const windows=glazing(body,b,m,{id:'porsche',frontZ:-.84,frontY:.915,frontW:.70,topFront:-.28,topRear:.63,roofY:1.355,roofW:.615,rearZ:1.30,rearY:1.035,rearW:.75});
   for(const side of [-1,1]) {
     // Long sculpted fender crests terminate in forward-facing, recessed round lamps.
-    b.torus(body,m.chrome,[side*.641,.912,-1.876],.151,.010,[0,.29,-1]);
-    const lens=b.mesh(body,new THREE.CircleGeometry(.143,32),m.headlight,[side*.641,.912,-1.887]);lens.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),new THREE.Vector3(0,.29,-1).normalize());
+    const housingPos=[],housingIndex=[];
+    const rings=[[-1.94,.885,.153],[-1.77,.885,.161],[-1.50,.89,.125],[-1.20,.90,.07]];
+    for(const [z,y,r]of rings)for(let i=0;i<=24;i++){const a=i/24*Math.PI*2;housingPos.push(side*.641+Math.cos(a)*r,y+Math.sin(a)*r*.96,z+Math.sin(a)*r*.278);}
+    for(let j=0;j<3;j++)for(let i=0;i<24;i++){const a=j*25+i;housingIndex.push(a,a+1,a+25,a+1,a+26,a+25);}
+    const housing=new THREE.BufferGeometry();housing.setAttribute('position',new THREE.Float32BufferAttribute(housingPos,3));housing.setIndex(housingIndex);housing.computeVertexNormals();b.mesh(body,housing,m.paint);
+    b.torus(body,m.chrome,[side*.641,.885,-1.947],.151,.010,[0,.29,-1]);
+    const lens=b.mesh(body,new THREE.CircleGeometry(.143,32),m.headlight,[side*.641,.885,-1.956]);lens.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),new THREE.Vector3(0,.29,-1).normalize());
     b.box(body,m.amber,[side*.592,.555,-2.063],[.235,.076,.032],.018);
     b.path(body,m.gap,[[side*.46,.80,-1.77],[side*.48,.863,-1.25],[side*.48,.922,-.85]],.006);
     b.box(body,m.black,[side*.848,.48,-.03],[.035,.075,1.60],.014);

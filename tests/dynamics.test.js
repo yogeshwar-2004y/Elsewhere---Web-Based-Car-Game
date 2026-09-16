@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createRoad, CAR_SPECS, stepVehicle, cruiseInput, angleDelta} from '../src/dynamics.js';
+import {createRoad, CAR_SPECS, stepVehicle, cruiseInput, angleDelta, surfaceHeight, wheelSteeringAngle, wheelContacts} from '../src/dynamics.js';
 test('seeds reproduce road geometry at chunk boundaries and far from origin',()=>{
   const a=createRoad('quiet-morning'),b=createRoad('quiet-morning'),c=createRoad('another-road');
   for(const s of [-1200,0,159.999,160,1600,1e7]){assert.equal(a.x(s),b.x(s));assert.equal(a.y(s),b.y(s));assert.notEqual(a.x(s),c.x(s));assert.ok(Number.isFinite(a.terrain(a.x(s)+180,s)));}
 });
-test('road edges meet terrain and all environments remain continuous',()=>{
-  for(const theme of ['alpine','desert','coastal']){const road=createRoad('slow-sunday',theme);for(let s=0;s<10000;s+=37){assert.ok(Math.abs(road.terrain(road.x(s)+5,s)-road.y(s))<.11);assert.ok(Math.abs(road.x(s+.001)-road.x(s))<.01);assert.ok(Math.abs(road.y(s+.001)-road.y(s))<.01);}}
+test('road edges meet the ground except at elevated bridges; all routes remain continuous',()=>{
+  for(const theme of ['alpine','desert','coastal']){const road=createRoad('slow-sunday',theme);for(let s=0;s<10000;s+=37){assert.ok(Math.abs(surfaceHeight(road,road.x(s)+5,s)-road.y(s))<.03);if(theme!=='alpine'||road.river(s)>=36)assert.ok(Math.abs(road.terrain(road.x(s)+5,s)-road.y(s))<.11);assert.ok(Math.abs(road.x(s+.001)-road.x(s))<.01);assert.ok(Math.abs(road.y(s+.001)-road.y(s))<.01);}}
 });
 test('autodrive stays on the road for a long journey in each car',()=>{
   for(const seed of ['slow-sunday','quiet-morning','a-twisty-one'])for(const spec of Object.values(CAR_SPECS)){
@@ -16,7 +16,7 @@ test('autodrive stays on the road for a long journey in each car',()=>{
   }
 });
 test('manual driving is frame-rate independent and braking can reverse',()=>{
-  const road=createRoad('open'),spec=CAR_SPECS.bmw;
+  const road={...createRoad('open'),y:()=>0,terrain:()=>0,ground:()=>0},spec=CAR_SPECS.bmw;
   const simulate=(dt)=>{const state={x:road.x(0)+2,s:0,speed:0,heading:0,steer:0,distance:0};for(let i=0;i<8/dt;i++)stepVehicle(state,{throttle:1,brake:0,steer:.2},spec,road,dt);return state;};
   const a=simulate(1/60),b=simulate(1/120);assert.ok(Math.abs(a.distance-b.distance)<.5);assert.ok(Math.abs(angleDelta(a.heading,b.heading))<.03);
   for(let i=0;i<600;i++)stepVehicle(a,{throttle:0,brake:1,steer:0},spec,road,1/60);assert.ok(a.speed<0);assert.ok(a.distance>0);
@@ -62,4 +62,29 @@ test('high-speed steering stays finite at 30, 60 and 144 FPS',()=>{
   const results=[];
   for(const fps of [30,60,144]){const s=fresh();s.speed=45;driveFor(s,CAR_SPECS.lamborghini,{steer:1,throttle:.3},4,flatRoad,1/fps);assert.ok(Number.isFinite(s.x+s.s+s.pitch+s.roll));assert.ok(Math.abs(s.roll)<.48);results.push(s);}
   assert.ok(Math.abs(results[0].distance-results[2].distance)<.6);
+});
+
+test('front wheels share a turning centre and rear wheels stay aligned',()=>{
+  for(const spec of Object.values(CAR_SPECS))for(const angle of [-.5,-.12,.12,.5]){
+    const left=wheelSteeringAngle(spec,angle,-1),right=wheelSteeringAngle(spec,angle,1);
+    const leftRadius=spec.wheelbase/Math.tan(left)-spec.track/2;
+    const rightRadius=spec.wheelbase/Math.tan(right)+spec.track/2;
+    assert.ok(Math.abs(leftRadius-rightRadius)<1e-8);assert.equal(wheelSteeringAngle(spec,angle,1,false),0);
+    assert.ok(angle>0?right>left:Math.abs(left)>Math.abs(right));
+  }
+});
+test('each tire samples its own contact point while rotated on uneven ground',()=>{
+  const road={...flatRoad,x:()=>-100,terrain:(x,s)=>x*.12+s*.18};
+  const state={x:3,s:10,heading:.63};
+  for(const spec of Object.values(CAR_SPECS))for(const wheel of wheelContacts(state,spec,road)){
+    const x=state.x+Math.cos(state.heading)*wheel.x-Math.sin(state.heading)*wheel.z;
+    const s=state.s-Math.sin(state.heading)*wheel.x-Math.cos(state.heading)*wheel.z;
+    assert.ok(Math.abs(wheel.height-(x*.12+s*.18+.018))<1e-8);
+  }
+});
+test('deep water requests a safe recovery while bridge decks remain drivable',()=>{
+  const coastal=createRoad('shore-test','coastal'),state={...fresh(),s:180,x:coastal.coast(180)-8};
+  stepVehicle(state,{},CAR_SPECS.bmw,coastal,1/60);assert.ok(state.waterDepth>1);assert.equal(state.needsRecovery,true);
+  const alpine=createRoad('bridge-test'),bridge={...fresh(),s:930,x:alpine.x(930)+2};
+  stepVehicle(bridge,{throttle:1},CAR_SPECS.bmw,alpine,1/60);assert.equal(bridge.needsRecovery,false);assert.equal(bridge.waterDepth,0);
 });

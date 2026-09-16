@@ -47,10 +47,10 @@ export function createRoad(seedText, theme = 'alpine') {
       const xs=a.map((n,i)=>(this.x(s0)+n)*(1-v)+(this.x(s0+8)+b[i])*v);
       let k=0;while(k<xs.length-2&&xs[k+1]<x)k++;
       if(x<xs[0]||x>xs.at(-1))return this.terrain(x,s);
-      const u=clamp((x-xs[k])/(xs[k+1]-xs[k]),0,1);
+      const dx=x-xs[k],width0=a[k+1]-a[k],width1=b[k+1]-b[k];
       const h00=this.terrain(this.x(s0)+a[k],s0),h10=this.terrain(this.x(s0)+a[k+1],s0);
       const h01=this.terrain(this.x(s0+8)+b[k],s0+8),h11=this.terrain(this.x(s0+8)+b[k+1],s0+8);
-      return u+v<=1?h00+(h10-h00)*u+(h01-h00)*v:h11+(h01-h11)*(1-u)+(h10-h11)*(1-v);
+      return dx<=(1-v)*width0?h00+(h10-h00)*dx/width0+(h01-h00)*v:h11+(h01-h11)*(xs[k+1]-x)/width1+(h10-h11)*(1-v);
     },
     x(s) { return noise1(s / 360, seed) * 112 + noise1(s / 1030, seed + 7) * 200 + noise1(s / 130, seed + 80) * 11; },
     y(s) { return 18 + noise1(s / 490, seed + 11) * 15 + noise1(s / 160, seed + 16) * 2.7; },

@@ -33,12 +33,12 @@ export function buildCockpit(body,b,id,spec,m) {
   const canvas=document.createElement('canvas');canvas.width=id==='porsche'?1024:768;canvas.height=288;
   const ctx=canvas.getContext('2d'),texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;b.textures.add(texture);
   const displayMat=b.material('#ffffff',{map:texture,emissiveMap:texture,emissive:'#ffffff',emissiveIntensity:.25,roughness:1,toneMapped:false});
-  const screen=b.mesh(cabin,new THREE.PlaneGeometry(id==='porsche'?.66:.59,.222),displayMat,[driverX,dashY+.095,-.400]);
+  const screen=b.mesh(cabin,new THREE.PlaneGeometry(id==='porsche'?.66:low?.70:.59,.222),displayMat,[driverX,dashY+.095,-.400]);
   screen.name='live-instruments';
-  const wheel=new THREE.Group();wheel.userData.movable=true;wheel.position.set(driverX,low?.77:id==='bmw'?.92:.89,-.22);wheel.rotation.x=-.15;cabin.add(wheel);
+  const wheel=new THREE.Group();wheel.userData.movable=true;wheel.position.set(driverX,dashY+.065,-.30);wheel.rotation.x=-.15;cabin.add(wheel);
   const rotation=new THREE.Group();wheel.add(rotation);
   b.torus(rotation,leather,[0,0,0],low?.153:.17,low?.018:.017);
-  for(const angle of [0,Math.PI*2/3,Math.PI*4/3]) {
+  for(const angle of [0,Math.PI/2,Math.PI*3/2]) {
     const x=Math.sin(angle)*.15,y=-Math.cos(angle)*.15;
     b.beam(rotation,low?m.black:m.chrome,[0,0,0],[x,y,0],low?.027:.020,6);
   }
@@ -47,12 +47,13 @@ export function buildCockpit(body,b,id,spec,m) {
   if(low)b.beam(rotation,stitch,[-.025,.151,.012],[.025,.151,.012],.005);
   b.batch(rotation);
   // The mirror receives a small live rear-view render in the game loop.
-  b.box(cabin,m.black,[0,eyeY+.17,-.64],[.34,.105,.035],.019);
-  const mirrorMaterial=b.material('#c6d7d8',{roughness:.15,metalness:.15,toneMapped:false});
-  const mirror=b.mesh(cabin,new THREE.PlaneGeometry(.305,.077),mirrorMaterial,[0,eyeY+.17,-.617]);mirror.name='rear-view-mirror';mirror.userData.movable=true;
-  b.beam(cabin,m.black,[0,eyeY+.22,-.65],[0,eyeY+.245,-.70],.012);
-  const eye=new THREE.Object3D();eye.name='driver-eye';eye.position.set(driverX,eyeY,.12);body.add(eye);
-  const bonnet=new THREE.Object3D();bonnet.name='bonnet-camera';bonnet.position.set(0,low?1.00:1.17,low?-.58:-.58);body.add(bonnet);
+  const mirrorY=eyeY+(low?.08:.13);
+  b.box(cabin,m.black,[0,mirrorY,-.64],[.34,.105,.035],.019);
+  const mirrorMaterial=new THREE.MeshBasicMaterial({color:'#ffffff',toneMapped:false});b.materials.add(mirrorMaterial);
+  const mirror=b.mesh(cabin,new THREE.PlaneGeometry(.305,.077),mirrorMaterial,[0,mirrorY,-.617]);mirror.name='rear-view-mirror';mirror.userData.movable=true;mirror.castShadow=mirror.receiveShadow=false;
+  b.beam(cabin,m.black,[0,mirrorY+.05,-.65],[0,mirrorY+.07,-.70],.012);
+  const eye=new THREE.Object3D();eye.name='driver-eye';eye.position.set(driverX,eyeY,.24);body.add(eye);
+  const bonnet=new THREE.Object3D();bonnet.name='bonnet-camera';bonnet.position.set(0,low?1.07:1.20,low?-1.14:-1.00);body.add(bonnet);
   let lastDraw=-1;
   function dial(cx,cy,r,value,max,label,color,major=8) {
     ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fillStyle='#101817';ctx.fill();ctx.strokeStyle='#59605a';ctx.lineWidth=3;ctx.stroke();
@@ -74,7 +75,7 @@ export function buildCockpit(body,b,id,spec,m) {
       ctx.strokeStyle='#34443a';ctx.lineWidth=16;ctx.beginPath();ctx.arc(248,167,123,Math.PI*.88,Math.PI*2.12);ctx.stroke();
       ctx.strokeStyle=rpm>spec.redline*.83?'#f19a64':spec.color;ctx.beginPath();ctx.arc(248,167,123,Math.PI*.88,Math.PI*.88+clamp(rpm/spec.redline,0,1)*Math.PI*1.24);ctx.stroke();
       ctx.textAlign='center';ctx.fillStyle=light;ctx.font='500 86px monospace';ctx.fillText(state.gear===-1?'R':String(state.gear||1),248,160);
-      ctx.font='500 25px monospace';ctx.fillText('STRADA',248,206);ctx.font='500 80px monospace';ctx.fillText(speed,566,160);ctx.font='500 21px monospace';ctx.fillText('km/h',566,194);ctx.font='500 18px monospace';ctx.fillStyle='#aab7a2';ctx.fillText(`${Math.round(rpm)} RPM`,248,247);
+      ctx.font='500 25px monospace';ctx.fillText('STRADA',248,206);ctx.font='500 70px monospace';ctx.fillText(speed,652,160);ctx.font='500 21px monospace';ctx.fillText('km/h',652,194);ctx.font='500 18px monospace';ctx.fillStyle='#aab7a2';ctx.fillText(`${Math.round(rpm)} RPM`,248,247);
     } else if(id==='porsche') {
       dial(102,145,78,78,120,'OIL',light,6);dial(288,145,95,90,140,'°C',light,7);dial(512,145,127,rpm/1000,8,'RPM',light,8);dial(742,145,95,speed,280,'km/h',light,7);dial(928,145,78,1,1,'FUEL',light,4);
     } else {

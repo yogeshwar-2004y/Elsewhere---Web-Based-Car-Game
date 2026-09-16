@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { World, THEMES } from './world.js';
 import { buildCar, disposeCar } from './cars.js';
-import { CAR_SPECS, clamp, damp, stepVehicle, cruiseInput, randomAt, settleVehicle, surfaceHeight } from './dynamics.js';
+import { CAR_SPECS, clamp, damp, stepVehicle, cruiseInput, randomAt, settleVehicle, surfaceHeight, wheelSteeringAngle, wheelContacts } from './dynamics.js';
 import { Soundscape } from './audio.js';
 import { mountUI, refreshIcons, icon } from './ui.js';
 import './style.css';
@@ -32,7 +32,7 @@ renderer.shadowMap.enabled=quality!=='low';renderer.shadowMap.type=THREE.PCFSoft
 $('#scene').append(renderer.domElement);
 const scene=new THREE.Scene();
 const environmentRoom=new RoomEnvironment(),pmrem=new THREE.PMREMGenerator(renderer);const environmentMap=pmrem.fromScene(environmentRoom,.04);scene.environment=environmentMap.texture;scene.environmentIntensity=.42;environmentRoom.dispose();pmrem.dispose();
-const mirrorTarget=new THREE.WebGLRenderTarget(256,96),mirrorCamera=new THREE.PerspectiveCamera(55,256/96,.15,1100);let mirrorTime=0;
+const mirrorTarget=new THREE.WebGLRenderTarget(256,96),mirrorCamera=new THREE.PerspectiveCamera(55,256/96,.15,1100);let mirrorTime=0;mirrorTarget.texture.repeat.x=-1;mirrorTarget.texture.offset.x=1;
 scene.fog=new THREE.Fog(THEMES[theme].fog,200,quality==='low'?760:1300);
 const camera=new THREE.PerspectiveCamera(48,innerWidth/innerHeight,.1,3500);
 const sun=new THREE.DirectionalLight('#fff1cc',3.1);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-85;sun.shadow.camera.right=85;sun.shadow.camera.top=85;sun.shadow.camera.bottom=-85;sun.shadow.camera.near=1;sun.shadow.camera.far=450;sun.shadow.bias=-.0003;sun.shadow.normalBias=.055;scene.add(sun,sun.target);
@@ -81,6 +81,7 @@ const keys=new Set(),touch={left:0,right:0,throttle:0,brake:0};
 let cameraReady=false,lastTime=0,elapsed=0,hudTime=0,lightingTime=0,toastTimer,contextLost=false,fpsFrames=0,fpsTime=0,frameRate=60;
 let carY=world.road.y(state.s),activeDialog=null,lastFocus=null,orbitYaw=0,orbitTilt=0,dragging=false,dragPoint=null;
 const cameraNames=['Chase','Cockpit','Bonnet','Wide'];
+const wheelCenter=new THREE.Vector3(),bodyOrientation=new THREE.Quaternion();
 const cameraForward=new THREE.Vector3(),cameraUp=new THREE.Vector3(0,1,0);
 const cameraTarget=new THREE.Vector3(),cameraDesired=new THREE.Vector3(),lookDesired=new THREE.Vector3();
 const dayTop=new THREE.Color(),dayBottom=new THREE.Color(),dayFog=new THREE.Color();
@@ -183,11 +184,14 @@ function updateView(dt,input){
   carY=state.heave??road.y(s);
   car.root.position.set(state.x,carY,-(s-origin));car.root.rotation.set(0,-state.heading,0);
   car.body.rotation.set(reducedMotion?(state.groundPitch||0):(state.pitch||0),0,reducedMotion?(state.groundRoll||0):(state.roll||0),'YXZ');
+  bodyOrientation.copy(car.body.quaternion);
   car.wheels.forEach((w,i)=>{
-    const contact=state.contacts?.[i];w.pivot.position.y=(contact?contact.height-carY:0)+w.radius;
-    const angle=state.steeringAngle||0,radius=car.spec.wheelbase/Math.max(Math.abs(Math.tan(angle)),.0001);
-    const ackermann=Math.sign(angle)*Math.atan(car.spec.wheelbase/Math.max(.4,radius-w.side*Math.sign(angle)*car.spec.track/2));
-    w.pivot.rotation.set(state.groundPitch||0,w.front?-ackermann:0,state.groundRoll||0,'YXZ');w.spin.rotation.x=state.wheelRotation||0;
+    // Match the axle centers to the tilted body; suspension changes height independently.
+    wheelCenter.set(w.x,w.radius,w.z).applyQuaternion(bodyOrientation);
+    const contact=state.contacts?.[i];
+    w.pivot.position.set(wheelCenter.x,(contact?contact.height-carY:0)+w.radius,wheelCenter.z);
+    const steer=wheelSteeringAngle(car.spec,state.steeringAngle||0,w.side,w.front);
+    w.pivot.rotation.set(state.groundPitch||0,-steer,state.groundRoll||0,'YXZ');w.spin.rotation.x=state.wheelRotation||0;
   });
   car.shadow.position.y=.025;car.shadow.rotation.set(-Math.PI/2+(state.groundPitch||0),0,state.groundRoll||0);
   car.materials.tail.emissiveIntensity=.35+night*.7+Math.max(state.brake||0,state.handbrake||0)*3.5;
@@ -232,9 +236,9 @@ function animate(now){
   requestAnimationFrame(animate);if(contextLost)return;
   const rawDt=lastTime?(now-lastTime)/1000:1/60;const dt=Math.min(rawDt,.05);lastTime=now;fpsFrames++;fpsTime+=rawDt;if(fpsTime>=1){frameRate=fpsFrames/fpsTime;fpsFrames=0;fpsTime=0;}if(document.hidden)return;elapsed+=dt;
   let input=activeDialog?{steer:0,throttle:0,brake:0}:getInput();if(autodrive)input=cruiseInput(state,world.road,car.spec);
-  if(started&&!paused&&!activeDialog){const steps=Math.max(1,Math.ceil(dt/(1/120)));for(let i=0;i<steps;i++)stepVehicle(state,input,car.spec,world.road,dt/steps);}
+  if(started&&!paused&&!activeDialog){const steps=Math.max(1,Math.ceil(dt/(1/120)));for(let i=0;i<steps;i++){stepVehicle(state,input,car.spec,world.road,dt/steps);if(world.resolveVehicle(state,car.spec))state.contacts=wheelContacts(state,car.spec,world.road);if(state.needsRecovery){resetCar(false);toast('Back on dry ground. Keep wandering.');break;}}}
   const nextOrigin=Math.floor(state.s/1600)*1600;if(nextOrigin!==origin){const delta=nextOrigin-origin;camera.position.z+=delta;cameraTarget.z+=delta;origin=nextOrigin;}
-  world.update(state.s,origin,state.x);lighting(dt);updateView(dt,input);sound.update(state,elapsed,night>.5,paused||!!activeDialog||!started);
+  world.update(state.s,origin,state.x);world.animate(elapsed,paused||!!activeDialog?0:dt);lighting(dt);updateView(dt,input);sound.update(state,elapsed,night>.5,paused||!!activeDialog||!started);
   hudTime+=dt;if(hudTime>.1){$('#speed').textContent=Math.round(Math.abs(state.speed)*3.6);$('#gear').textContent=state.gear===-1?'R':String(state.gear||1);$('#rpm').textContent=Math.round((state.rpm||car.spec.idle)/100)*100;$('#rev-fill').style.width=clamp((state.rpm||0)/car.spec.redline*100,0,100)+'%';$('#distance').innerHTML=(state.distance/1000).toFixed(1)+' <span>km</span>';hudTime=0;if(import.meta.env.DEV)renderer.domElement.dataset.diagnostics=JSON.stringify({fps:Math.round(frameRate),speed:state.speed,rpm:state.rpm,gear:state.gear,steeringAngle:state.steeringAngle,pitch:state.pitch,roll:state.roll,camera:cameraNames[cameraMode],distance:state.distance,offroad:state.offroad,s:state.s,x:state.x,roadX:world.road.x(state.s),origin,chunks:world.chunks.size,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures,paused,autodrive,quality,car:carId,theme});}
   renderer.render(scene,camera);
 }
