@@ -3,6 +3,10 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { World, THEMES } from './world.js';
 import { buildCar, disposeCar } from './cars.js';
 import { CAR_SPECS, clamp, damp, stepVehicle, cruiseInput, randomAt, settleVehicle, surfaceHeight, wheelSteeringAngle, wheelContacts } from './dynamics.js';
+import { Multiplayer } from './multiplayer.js';
+import { RemoteDrivers } from './remote-drivers.js';
+import { MAPS } from './multiplayer-ui.js';
+import { cleanName } from '../shared/protocol.js';
 import { Soundscape } from './audio.js';
 import { mountUI, refreshIcons, icon } from './ui.js';
 import './style.css';
@@ -16,10 +20,11 @@ const initialTheme=query.get('theme')||saved.theme;
 let theme=Object.hasOwn(THEMES,initialTheme)?initialTheme:'alpine';
 let carId=Object.hasOwn(CAR_SPECS,saved.car)?saved.car:'bmw';
 let seed=(query.get('seed')||saved.seed||'slow-sunday').slice(0,64);
+let multiplayer=null,applyingRoom=false,remoteVisible=0,nickname=cleanName(saved.nickname||'Wanderer');
 let quality=['low','medium','high'].includes(saved.quality)?saved.quality:matchMedia('(pointer: coarse)').matches?'medium':'high';
 let nightTarget=saved.night===true?1:0,night=nightTarget,started=false,paused=false,autodrive=false,origin=0,cameraMode=0,uiHidden=false;
 const sound=new Soundscape();sound.volume=Number.isFinite(saved.volume)?clamp(saved.volume,0,1):.32;sound.musicVolume=Number.isFinite(saved.music)?clamp(saved.music,0,1):.3;sound.muted=saved.muted===true;sound.theme=theme;sound.car=carId;
-function save(){try{localStorage.setItem('elsewhere-settings',JSON.stringify({theme,car:carId,seed,quality,night:!!nightTarget,volume:sound.volume,music:sound.musicVolume,muted:sound.muted}));}catch{}}
+function save(){try{localStorage.setItem('elsewhere-settings',JSON.stringify({nickname,theme,car:carId,seed,quality,night:!!nightTarget,volume:sound.volume,music:sound.musicVolume,muted:sound.muted}));}catch{}}
 let renderer;
 try {
   renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
@@ -32,7 +37,7 @@ renderer.shadowMap.enabled=quality!=='low';renderer.shadowMap.type=THREE.PCFSoft
 $('#scene').append(renderer.domElement);
 const scene=new THREE.Scene();
 const environmentRoom=new RoomEnvironment(),pmrem=new THREE.PMREMGenerator(renderer);const environmentMap=pmrem.fromScene(environmentRoom,.04);scene.environment=environmentMap.texture;scene.environmentIntensity=.42;environmentRoom.dispose();pmrem.dispose();
-const mirrorTarget=new THREE.WebGLRenderTarget(256,96),mirrorCamera=new THREE.PerspectiveCamera(55,256/96,.15,1100);let mirrorTime=0;mirrorTarget.texture.repeat.x=-1;mirrorTarget.texture.offset.x=1;
+const mirrorTarget=new THREE.WebGLRenderTarget(256,96),mirrorCamera=new THREE.PerspectiveCamera(55,256/96,.15,3500);let mirrorTime=0;mirrorTarget.texture.repeat.x=-1;mirrorTarget.texture.offset.x=1;
 scene.fog=new THREE.Fog(THEMES[theme].fog,200,quality==='low'?760:1300);
 const camera=new THREE.PerspectiveCamera(48,innerWidth/innerHeight,.1,3500);
 const sun=new THREE.DirectionalLight('#fff1cc',3.1);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-85;sun.shadow.camera.right=85;sun.shadow.camera.top=85;sun.shadow.camera.bottom=-85;sun.shadow.camera.near=1;sun.shadow.camera.far=450;sun.shadow.bias=-.0003;sun.shadow.normalBias=.055;scene.add(sun,sun.target);
@@ -73,6 +78,7 @@ for(let i=0;i<13;i++){
   mountain.rotation.y=randomAt(i,75)*6.28;ridges.add(mountain);
 }
 const world=new World(scene,seed,theme,quality);
+const remoteDrivers=new RemoteDrivers(scene);
 let car=buildCar(carId);scene.add(car.root);
 const state={s:180,x:0,speed:0,heading:0,travelHeading:0,steer:0,distance:0,offroad:false};
 function resetCar(announce=true){state.x=world.road.x(state.s)+2.3;state.heading=world.road.heading(state.s);state.speed=0;settleVehicle(state,car.spec,world.road);if(announce)toast('Back on the road. No worries.');}
@@ -105,12 +111,12 @@ function startDrive(){
 function setPause(value){if(!started)return;paused=value;$('#pause-overlay').hidden=!value;$('#pause-btn').innerHTML=icon(value?'play':'pause');$('#pause-btn').setAttribute('aria-label',value?'Resume drive':'Pause drive');refreshIcons();if(!value)sound.start().catch(()=>{});}
 function setAutodrive(value){autodrive=value;$('#cruise-btn').setAttribute('aria-checked',value);if(value&&!started)startDrive();if(started)toast(value?'Autodrive on. Enjoy the view.':'The wheel is yours.');}
 function setCamera(value){cameraMode=Number(value);document.body.classList.toggle('cockpit-view',cameraMode===1);cameraReady=false;orbitYaw=orbitTilt=0;$('#camera-view').value=String(cameraMode);$('#camera-btn').setAttribute('aria-label',`Change camera: ${cameraNames[cameraMode]}`);$('#camera-status').textContent=cameraNames[cameraMode]+' view';if(!started)startDrive();toast(cameraMode===1?'Cockpit · live instruments and rear-view mirror':cameraNames[cameraMode]+' camera');}
-function setNight(value){nightTarget=value?1:0;syncUI();}
-function setTheme(value){if(value===theme)return;theme=value;world.setEnvironment(seed,theme);world.initialized=false;world.update(state.s,origin);sound.theme=theme;resetCar(false);cameraReady=false;syncUI();updateUrl();toast(`${THEMES[theme].name}. A change of scenery.`);}
-function setCar(value){if(value===carId)return;scene.remove(car.root);disposeCar(car);carId=value;car=buildCar(carId);scene.add(car.root);settleVehicle(state,car.spec,world.road);cameraReady=false;sound.car=carId;syncUI();$('#car-picker').hidden=true;$('#car-btn').setAttribute('aria-expanded','false');toast(CAR_SPECS[carId].subtitle);}
+function setNight(value){if(multiplayer?.room&&!applyingRoom){if(multiplayer.isHost)multiplayer.configure({...multiplayer.room.settings,night:!!value});else toast('The host sets the time of day for this room.');return;}nightTarget=value?1:0;syncUI();}
+function setTheme(value){if(value===theme)return;if(multiplayer?.room&&!applyingRoom){if(multiplayer.isHost)multiplayer.configure({...multiplayer.room.settings,theme:value});else toast('The host chooses the shared map.');return;}theme=value;world.setEnvironment(seed,theme);world.initialized=false;world.update(state.s,origin);sound.theme=theme;resetCar(false);cameraReady=false;syncUI();updateUrl();toast(`${THEMES[theme].name}. A change of scenery.`);}
+function setCar(value){if(value===carId)return;scene.remove(car.root);disposeCar(car);carId=value;car=buildCar(carId);scene.add(car.root);settleVehicle(state,car.spec,world.road);cameraReady=false;sound.car=carId;multiplayer?.setCar(carId);syncUI();$('#car-picker').hidden=true;$('#car-btn').setAttribute('aria-expanded','false');toast(CAR_SPECS[carId].subtitle);}
 function setQuality(value){quality=value;world.quality=value;world.setEnvironment(seed,theme);world.initialized=false;world.update(state.s,origin);renderer.setPixelRatio(Math.min(devicePixelRatio,value==='high'?1.75:value==='medium'?1.25:1));renderer.shadowMap.enabled=value!=='low';sun.shadow.mapSize.set(value==='high'?2048:1024,value==='high'?2048:1024);sun.shadow.map?.dispose();sun.shadow.map=null;save();}
 function openDialog(id){lastFocus=document.activeElement;activeDialog=id;$('#'+id).hidden=false;keys.clear();if(id==='seed-modal')$('#seed-input').value=seed;$('#'+id).querySelector('input,button,select')?.focus();}
-function closeDialog(id){$('#'+id).hidden=true;if(activeDialog===id)activeDialog=null;if(id==='car-picker')$('#car-btn').setAttribute('aria-expanded','false');lastFocus?.focus();}
+function closeDialog(id){if(id==='multiplayer-modal'&&multiplayer?.pending)multiplayer.leave();$('#'+id).hidden=true;if(activeDialog===id)activeDialog=null;if(id==='car-picker')$('#car-btn').setAttribute('aria-expanded','false');lastFocus?.focus();}
 $('#start-btn').addEventListener('click',startDrive);
 $('#camera-btn').addEventListener('click',()=>setCamera((cameraMode+1)%4));$('#camera-view').addEventListener('change',e=>setCamera(e.target.value));
 renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Driving view');
@@ -132,13 +138,13 @@ $('#fullscreen-btn').addEventListener('click',async()=>{try{if(document.fullscre
 $('#quality').addEventListener('change',e=>setQuality(e.target.value));
 $('#volume').addEventListener('input',e=>{sound.volume=Number(e.target.value)/100;$('#volume-output').textContent=e.target.value+'%';sound.start().catch(()=>{});save();});
 $('#music').addEventListener('input',e=>{sound.musicVolume=Number(e.target.value)/100;$('#music-output').textContent=e.target.value+'%';sound.start().catch(()=>{});save();});
-$('#apply-seed').addEventListener('click',()=>{const value=$('#seed-input').value.trim();if(!value){$('#seed-input').focus();toast('Give this road a name first.');return;}seed=value;state.s=180;state.distance=0;origin=0;world.setEnvironment(seed,theme);world.initialized=false;world.update(state.s,origin);resetCar(false);cameraReady=false;syncUI();updateUrl();closeDialog('seed-modal');toast('A new road, just for you.');});
+$('#apply-seed').addEventListener('click',()=>{const value=$('#seed-input').value.trim();if(!value){$('#seed-input').focus();toast('Give this road a name first.');return;}if(multiplayer?.room&&!applyingRoom){if(multiplayer.isHost){multiplayer.configure({...multiplayer.room.settings,seed:value});closeDialog('seed-modal');}else toast('The host chooses the shared road seed.');return;}seed=value;state.s=180;state.distance=0;origin=0;world.setEnvironment(seed,theme);world.initialized=false;world.update(state.s,origin);resetCar(false);cameraReady=false;syncUI();updateUrl();closeDialog('seed-modal');toast('A new road, just for you.');});
 $('#seed-input').addEventListener('keydown',e=>{if(e.key==='Enter')$('#apply-seed').click();});
-$('#copy-seed').addEventListener('click',async()=>{const url=new URL(location.href);url.searchParams.set('seed',$('#seed-input').value.trim()||seed);url.searchParams.set('theme',theme);try{await navigator.clipboard.writeText(url.href);toast('Road link copied. A little escape to share.');}catch{const field=$('#seed-input');field.value=url.href;field.select();toast('Select and copy the link in the field.');}});
+$('#copy-seed').addEventListener('click',async()=>{const url=new URL(location.href);url.searchParams.delete('room');url.searchParams.set('seed',$('#seed-input').value.trim()||seed);url.searchParams.set('theme',theme);try{await navigator.clipboard.writeText(url.href);toast('Road link copied. A little escape to share.');}catch{const field=$('#seed-input');field.value=url.href;field.select();toast('Select and copy the link in the field.');}});
 function manualInput(){if(autodrive){autodrive=false;$('#cruise-btn').setAttribute('aria-checked',false);toast('The wheel is yours.');}}
 const drivingKeys=['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'];
 addEventListener('keydown',e=>{
-  if(activeDialog){if(e.code==='Escape'){e.preventDefault();closeDialog(activeDialog);}if(e.key==='Tab'){const focusables=[...$('#'+activeDialog).querySelectorAll('button,input,select')];const first=focusables[0],last=focusables.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}return;}
+  if(activeDialog){if(e.code==='Escape'){e.preventDefault();closeDialog(activeDialog);}if(e.key==='Tab'){const focusables=[...$('#'+activeDialog).querySelectorAll('button,input,select')].filter(el=>!el.disabled&&el.getClientRects().length);const first=focusables[0],last=focusables.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}return;}
   if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName))return;
   if(drivingKeys.includes(e.code)||e.code==='Space')e.preventDefault();
   keys.add(e.code);if(e.repeat)return;
@@ -158,6 +164,96 @@ addEventListener('blur',()=>{releaseInputs();if(started)setPause(true);});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){releaseInputs();if(started)setPause(true);sound.suspend();}else lastTime=performance.now();});
 $$('[data-control]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);touch[b.dataset.control]=1;b.classList.add('active');manualInput();sound.start().catch(()=>{});});const release=()=>{touch[b.dataset.control]=0;b.classList.remove('active');};b.addEventListener('pointerup',release);b.addEventListener('pointercancel',release);b.addEventListener('lostpointercapture',release);});
 addEventListener('gamepadconnected',()=>{$('#gamepad-note').textContent='Gamepad connected · left stick + triggers';toast('Gamepad connected. Make yourself comfortable.');});
+
+function roomMode(join){
+  $('#create-room-form').hidden=join;$('#join-room-form').hidden=!join;
+  $('#room-create-mode').setAttribute('aria-pressed',!join);$('#room-join-mode').setAttribute('aria-pressed',join);
+}
+function openMultiplayer(){
+  $('#driver-name').value=nickname;$('#create-map').value=theme;$('#create-seed').value=seed;
+  $('#create-map-description').textContent=MAPS.find(m=>m.id===theme).description;
+  openDialog('multiplayer-modal');
+}
+function roomControls(room,previous){
+  const connected=!!room,host=multiplayer?.isHost;
+  document.body.classList.toggle('room-connected',connected);$('#session-badge').hidden=!connected;
+  $('#room-connect').hidden=connected;$('#room-active').hidden=!connected;
+  $$('[data-theme]').forEach(button=>button.disabled=connected&&!host);
+  for(const id of ['day-btn','night-btn','apply-seed'])$('#'+id).disabled=connected&&!host;
+  $('#seed-input').readOnly=connected&&!host;
+  if(!room)return;
+  $('#room-code').textContent=room.code;$('#session-summary').textContent=`${room.code} · ${room.players.length} / ${room.capacity}`;
+  $('#room-occupancy').textContent=`${room.players.length} of ${room.capacity} drivers`;$('#room-role').textContent=host?'You’re the host':'Shared session';
+  $('#room-roster').replaceChildren(...room.players.map(player=>{
+    const li=document.createElement('li'),dot=document.createElement('span'),name=document.createElement('span'),info=document.createElement('span');
+    dot.className='member-dot';dot.style.background=CAR_SPECS[player.car].color;name.className='member-name';name.textContent=player.name+(player.id===multiplayer.id?' (you)':'');info.className='member-info';info.textContent=(player.id===room.host?'Host · ':'')+CAR_SPECS[player.car].name;li.append(dot,name,info);return li;
+  }));
+  for(const id of ['session-map','session-seed','apply-room-map'])$('#'+id).disabled=!host;
+  if(!previous||previous.settings.theme!==room.settings.theme||previous.settings.seed!==room.settings.seed){$('#session-map').value=room.settings.theme;$('#session-seed').value=room.settings.seed;}
+  $('#room-map-note').textContent=host?'You choose the map, road seed, and time of day. A map change starts everyone on the new road.':'The host chooses the map, road seed, and time of day. You can change your car and drive freely.';
+  $('#catch-up').disabled=room.players.length<2;
+}
+multiplayer=new Multiplayer({
+  onRoom(room,previous,welcome){
+    if(!room){
+      remoteDrivers.clear();roomControls(null,previous);
+      const url=new URL(location.href);url.searchParams.delete('room');history.replaceState(null,'',url);
+      if(previous){$('#join-code').value=previous.code;roomMode(true);}
+      return;
+    }
+    const roadChanged=welcome||room.revision!==previous?.revision;
+    applyingRoom=true;
+    if(roadChanged){
+      remoteDrivers.clear();theme=room.settings.theme;seed=room.settings.seed;
+      const leader=room.players.find(p=>p.id===room.host&&p.id!==multiplayer.id)?.state;
+      const positionInGroup=Math.max(0,room.players.findIndex(p=>p.id===multiplayer.id));
+      state.s=leader?leader.s-8*Math.max(1,positionInGroup):180-positionInGroup*8;
+      state.distance=0;origin=Math.floor(state.s/1600)*1600;
+      world.setEnvironment(seed,theme);world.initialized=false;world.update(state.s,origin);resetCar(false);cameraReady=false;sound.theme=theme;
+    }
+    nightTarget=room.settings.night?1:0;syncUI();applyingRoom=false;
+    remoteDrivers.sync(room.players,multiplayer.id);roomControls(room,previous);
+    const url=new URL(location.href);url.searchParams.set('room',room.code);url.searchParams.set('theme',theme);url.searchParams.set('seed',seed);history.replaceState(null,'',url);
+    if(welcome){closeDialog('multiplayer-modal');startDrive();toast(`Room ${room.code}. The road is yours to share.`);}
+    else if(roadChanged)toast(`Everyone’s exploring ${THEMES[theme].name}.`);
+    else if(previous?.host!==room.host&&multiplayer.isHost)toast('Your friend left. You’re now the room host.');
+  },
+  onStates(players){remoteDrivers.receive(players);},
+  onStatus(status,message){
+    $('#room-message').textContent=message;$('#room-message').dataset.status=status;
+    for(const id of ['create-room','join-room','room-create-mode','room-join-mode'])$('#'+id).disabled=status==='connecting';
+    if(status==='offline'&&started)toast(message);
+  },
+});
+for(const id of ['multiplayer-btn','friends-btn','session-badge'])$('#'+id).addEventListener('click',openMultiplayer);
+$('#room-create-mode').addEventListener('click',()=>roomMode(false));$('#room-join-mode').addEventListener('click',()=>roomMode(true));
+$('#create-map').addEventListener('change',()=>{const map=MAPS.find(m=>m.id===$('#create-map').value);$('#create-map-description').textContent=map.description;$('#create-seed').value=map.seed;});
+async function connectRoom(type){
+  nickname=cleanName($('#driver-name').value);$('#driver-name').value=nickname;save();
+  const settings={theme:$('#create-map').value,seed:$('#create-seed').value.trim(),night:!!nightTarget};
+  try{await multiplayer.connect(type,{name:nickname,car:carId,settings,code:$('#join-code').value.trim().toUpperCase()});}catch{/* The connection status explains the failure; solo remains available. */}
+}
+$('#create-room-form').addEventListener('submit',e=>{e.preventDefault();connectRoom('create');});
+$('#join-room-form').addEventListener('submit',e=>{e.preventDefault();connectRoom('join');});
+$('#join-code').addEventListener('input',e=>e.target.value=e.target.value.toUpperCase().replace(/[^A-Z2-9]/g,''));
+$('#room-map-form').addEventListener('submit',e=>{e.preventDefault();multiplayer.configure({...multiplayer.room.settings,theme:$('#session-map').value,seed:$('#session-seed').value.trim()});});
+$('#room-drive').addEventListener('click',()=>{closeDialog('multiplayer-modal');setPause(false);});
+function goSolo(){multiplayer.leave();closeDialog('multiplayer-modal');if(!started)startDrive();else setPause(false);toast('Solo drive. Just you and the open road.');}
+$('#solo-choice').addEventListener('click',goSolo);$('#leave-room').addEventListener('click',goSolo);
+async function copyRoom(link){
+  if(!multiplayer.room)return;
+  const value=link?location.href:multiplayer.room.code;
+  try{await navigator.clipboard.writeText(value);toast(link?'Invite link copied. Send it to a friend.':'Session code copied.');}catch{$('#room-message').textContent=link?'Copy the address from your browser to invite a friend.':`Share this code: ${multiplayer.room.code}`;}
+}
+$('#copy-room-code').addEventListener('click',()=>copyRoom(false));$('#copy-room-link').addEventListener('click',()=>copyRoom(true));
+$('#catch-up').addEventListener('click',()=>{
+  const room=multiplayer.room;if(!room)return;
+  const others=room.players.filter(p=>p.id!==multiplayer.id&&p.state),leader=others.find(p=>p.id===room.host)||others[0];
+  if(!leader)return toast('Your friends haven’t started driving yet.');
+  state.s=leader.state.s-8;world.initialized=false;resetCar(false);cameraReady=false;closeDialog('multiplayer-modal');setPause(false);toast('Back with your companions.');
+});
+if(query.get('room')){$('#join-code').value=query.get('room').toUpperCase().slice(0,6);roomMode(true);openMultiplayer();}
+
 let padButtons=[];
 function getInput(){
   let steer=Number(keys.has('KeyD')||keys.has('ArrowRight'))-Number(keys.has('KeyA')||keys.has('ArrowLeft'))+touch.right-touch.left;
@@ -238,8 +334,8 @@ function animate(now){
   let input=activeDialog?{steer:0,throttle:0,brake:0}:getInput();if(autodrive)input=cruiseInput(state,world.road,car.spec);
   if(started&&!paused&&!activeDialog){const steps=Math.max(1,Math.ceil(dt/(1/120)));for(let i=0;i<steps;i++){stepVehicle(state,input,car.spec,world.road,dt/steps);if(world.resolveVehicle(state,car.spec))state.contacts=wheelContacts(state,car.spec,world.road);if(state.needsRecovery){resetCar(false);toast('Back on dry ground. Keep wandering.');break;}}}
   const nextOrigin=Math.floor(state.s/1600)*1600;if(nextOrigin!==origin){const delta=nextOrigin-origin;camera.position.z+=delta;cameraTarget.z+=delta;origin=nextOrigin;}
-  world.update(state.s,origin,state.x);world.animate(elapsed,paused||!!activeDialog?0:dt);lighting(dt);updateView(dt,input);sound.update(state,elapsed,night>.5,paused||!!activeDialog||!started);
-  hudTime+=dt;if(hudTime>.1){$('#speed').textContent=Math.round(Math.abs(state.speed)*3.6);$('#gear').textContent=state.gear===-1?'R':String(state.gear||1);$('#rpm').textContent=Math.round((state.rpm||car.spec.idle)/100)*100;$('#rev-fill').style.width=clamp((state.rpm||0)/car.spec.redline*100,0,100)+'%';$('#distance').innerHTML=(state.distance/1000).toFixed(1)+' <span>km</span>';hudTime=0;if(import.meta.env.DEV)renderer.domElement.dataset.diagnostics=JSON.stringify({fps:Math.round(frameRate),speed:state.speed,rpm:state.rpm,gear:state.gear,steeringAngle:state.steeringAngle,pitch:state.pitch,roll:state.roll,camera:cameraNames[cameraMode],distance:state.distance,offroad:state.offroad,s:state.s,x:state.x,roadX:world.road.x(state.s),origin,chunks:world.chunks.size,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures,paused,autodrive,quality,car:carId,theme});}
+  world.update(state.s,origin,state.x);world.animate(elapsed,paused||!!activeDialog?0:dt);lighting(dt);remoteVisible=remoteDrivers.update(now,dt,origin,night,state,world.road);updateView(dt,input);multiplayer.sendState(state,paused||!!activeDialog||!started,now);sound.update(state,elapsed,night>.5,paused||!!activeDialog||!started);
+  hudTime+=dt;if(hudTime>.1){$('#speed').textContent=Math.round(Math.abs(state.speed)*3.6);$('#gear').textContent=state.gear===-1?'R':String(state.gear||1);$('#rpm').textContent=Math.round((state.rpm||car.spec.idle)/100)*100;$('#rev-fill').style.width=clamp((state.rpm||0)/car.spec.redline*100,0,100)+'%';$('#distance').innerHTML=(state.distance/1000).toFixed(1)+' <span>km</span>';hudTime=0;if(import.meta.env.DEV)renderer.domElement.dataset.diagnostics=JSON.stringify({fps:Math.round(frameRate),speed:state.speed,rpm:state.rpm,gear:state.gear,steeringAngle:state.steeringAngle,pitch:state.pitch,roll:state.roll,camera:cameraNames[cameraMode],distance:state.distance,offroad:state.offroad,s:state.s,x:state.x,roadX:world.road.x(state.s),origin,chunks:world.chunks.size,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures,paused,autodrive,quality,car:carId,theme,room:multiplayer.room?.code||null,players:multiplayer.room?.players.length||1,remoteVisible});}
   renderer.render(scene,camera);
 }
 addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});

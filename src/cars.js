@@ -154,7 +154,7 @@ function buildPorsche(body,b,spec,m) {
   details(body,b,spec,m,.856,-2.11,2.10,.93);
   return windows;
 }
-export function buildCar(id) {
+export function buildCar(id,{remote=false}={}) {
   const spec=CAR_SPECS[id],b=createModelBuilder(),root=new THREE.Group(),body=new THREE.Group();root.name=spec.name;body.name='sprung-body';root.add(body);
   const m={
     paint:b.material(spec.color,{metalness:.40,roughness:.25}),chrome:b.material('#cbd2d1',{metalness:.86,roughness:.23}),alloy:b.material('#b9c0bd',{metalness:.78,roughness:.30}),
@@ -166,9 +166,10 @@ export function buildCar(id) {
   m.trim=id==='bmw'?m.chrome:m.black;
   const windows=id==='bmw'?buildBMW(body,b,spec,m):id==='lamborghini'?buildLamborghini(body,b,spec,m):buildPorsche(body,b,spec,m);
   const wheels=buildWheels(root,b,spec,m);
-  const cockpit=buildCockpit(body,b,id,spec,m);
+  const cockpit=remote?null:buildCockpit(body,b,id,spec,m);
+  if(remote){for(const side of [-1,1]){b.box(body,m.black,[side*.36,.75,.70],[.49,.57,.13],.045);b.box(body,m.black,[side*.36,1.05,.74],[.26,.18,.12],.035);}b.box(body,m.black,[0,.78,-.65],[1.40,.16,.35],.04);}
   const beams=[];
-  for(const side of [-1,1]){const spot=new THREE.SpotLight('#fff0d6',0,115,Math.PI/7,.64,1.25);spot.position.set(side*.64,.72,-1.92);spot.target.position.set(side*1.5,-.20,-42);body.add(spot,spot.target);beams.push(spot);}
+  for(const side of remote?[]:[-1,1]){const spot=new THREE.SpotLight('#fff0d6',0,115,Math.PI/7,.64,1.25);spot.position.set(side*.64,.72,-1.92);spot.target.position.set(side*1.5,-.20,-42);body.add(spot,spot.target);beams.push(spot);}
   const canvas=document.createElement('canvas');canvas.width=128;canvas.height=128;const ctx=canvas.getContext('2d'),gradient=ctx.createRadialGradient(64,64,12,64,64,62);gradient.addColorStop(0,'rgba(10,21,19,.6)');gradient.addColorStop(1,'rgba(10,21,19,0)');ctx.fillStyle=gradient;ctx.fillRect(0,0,128,128);
   const texture=new THREE.CanvasTexture(canvas);b.textures.add(texture);const shadowMat=b.material('#ffffff',{map:texture,transparent:true,depthWrite:false,roughness:1});const shadow=b.mesh(root,new THREE.PlaneGeometry(3.1,5.5),shadowMat,[0,.024,0]);shadow.rotation.x=-Math.PI/2;shadow.castShadow=false;
   b.batch(body);
