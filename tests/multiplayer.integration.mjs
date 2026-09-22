@@ -21,7 +21,19 @@ test('real sockets create/join, relay cars, synchronize maps, hand over hosting 
   b.send({type:'profile',car:'lamborghini'});await a.wait(m=>m.type==='room'&&m.players.some(p=>p.car==='lamborghini'));
   a.socket.close();const transferred=await b.wait(m=>m.type==='room'&&m.host===guest.you);assert.equal(transferred.players.length,1);
   b.send({type:'leave'});await b.wait(m=>m.type==='left');assert.equal(app.hub.rooms.size,0);b.socket.close();
-  const response=await fetch(`http://127.0.0.1:${port}/health`);assert.equal(response.status,200);assert.deepEqual(await response.json(),{ok:true});
+  const response=await fetch(`http://127.0.0.1:${port}/health`);assert.equal(response.status,200);assert.deepEqual(await response.json(),{ok:true,service:'elsewhere-rooms'});
+});
+test('separate Vercel frontend can check health and open rooms on the backend',async t=>{
+  const origin='https://elsewhere-gules.vercel.app';
+  const app=createServer({allowedOrigins:[origin]});app.server.listen(0,'127.0.0.1');await once(app.server,'listening');t.after(()=>app.close());
+  const base=`http://127.0.0.1:${app.server.address().port}`;
+  const health=await fetch(`${base}/health`,{headers:{Origin:origin}});
+  assert.equal(health.headers.get('access-control-allow-origin'),origin);
+  assert.equal(health.headers.get('vary'),'Origin');
+  assert.equal((await health.json()).service,'elsewhere-rooms');
+  const denied=await fetch(`${base}/health`,{headers:{Origin:'https://unrelated.example'}});
+  assert.equal(denied.headers.get('access-control-allow-origin'),null);
+  const socket=new WebSocket(base.replace('http:','ws:')+'/room',{origin});await once(socket,'open');socket.close();
 });
 test('unknown codes and cross-origin connections fail without creating rooms',async t=>{
   const app=createServer();app.server.listen(0,'127.0.0.1');await once(app.server,'listening');t.after(()=>app.close());const url=`ws://127.0.0.1:${app.server.address().port}/room`;

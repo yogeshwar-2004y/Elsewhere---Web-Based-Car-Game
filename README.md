@@ -45,6 +45,21 @@ Static hosting alone supports solo. For a separately hosted multiplayer backend,
 
 The room server validates payloads, caps room size and message size, throttles updates, checks browser origins, removes disconnected peers, and isolates rooms by code. It relays client-simulated cars with interpolated rendering, not an authoritative competitive physics simulation. No accounts, persistent player history, chat, or telemetry are added.
 
+### Vercel game + free Render multiplayer
+
+The Vercel site is a static frontend. Vite's development `/room` proxy does not run there. A connection to `wss://elsewhere-gules.vercel.app/room` without a deployed room backend will fail. Keep the existing Vercel frontend and deploy the room server separately:
+
+1. Commit and push these changes (including `render.yaml`) to the GitHub repository used for deployment.
+2. In [Render](https://dashboard.render.com), choose **New → Blueprint**, connect this repository, and use `render.yaml`. It creates a **Free** Node web service with `npm ci --omit=dev`, `npm start`, and `/health` as its health check. It does not build or host another copy of the game.
+3. Wait for the service to become **Live**. Open its actual Render URL with `/health` appended; it must return `{"ok":true,"service":"elsewhere-rooms"}`. Copy the assigned hostname; do not assume the service name is its hostname.
+4. In Vercel → **elsewhere → Settings → Environment Variables**, set `VITE_MULTIPLAYER_URL` to `wss://<actual-render-hostname>/room` for **Production**. Redeploy the frontend: Vite embeds this setting at build time.
+5. The Blueprint already sets `ALLOWED_ORIGINS=https://elsewhere-gules.vercel.app`. If you change the frontend domain, update that value in Render. Add exact preview origins only when needed, separated by commas.
+6. Open the Vercel game in two browsers: create a session, join its code, and confirm both players appear and share map changes.
+
+The client checks the room server before opening its socket, allows up to 90 seconds for it to wake, and keeps solo play available. [Render's free services](https://render.com/docs/free) sleep after inactivity, so the first connection may take about a minute. Rooms disappear on sleep, restart, or deploy; this free setup does not preserve sessions. Keep a single service instance because rooms live in memory.
+
+Although [Vercel now offers WebSocket Functions](https://vercel.com/docs/functions/websockets), adding a rewrite alone would not deploy this backend, and separate function instances would not share its in-memory rooms. This configuration deliberately runs the existing room server as one persistent process on Render.
+
 ## Controls
 
 - **WASD / arrows:** accelerate, brake/reverse, steer

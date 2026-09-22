@@ -3,3 +3,7 @@ dist/
 test-results/
 playwright-report/
 .DS_Store
+.env
+.env.*
+!.env.example
+.vercel

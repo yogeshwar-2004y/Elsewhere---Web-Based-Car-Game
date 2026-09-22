@@ -1,6 +1,6 @@
 # Validation
 
-`npm test` runs 27 automated tests covering:
+`npm test` runs automated tests covering:
 
 - Reproducible terrain, continuous roads, bridge clearance, and matching terrain chunk edges.
 - Twelve simulated minutes of autodrive per car and seed across nine combinations.
@@ -10,8 +10,9 @@
 - Vegetation roots and physics heights matching actual rendered triangles.
 - Continuous coastal water through origin shifts and bounded resources over a 20 km drive.
 - Session codes, room capacity, host-only configuration, stale position rejection after map changes, name/payload validation, room isolation, host handoff, and empty-room cleanup.
+- Local/separate server URL resolution, secure connection requirements, missing backend detection, static fallback rejection, and health-check cancellation.
 
-`npm run test:multiplayer` runs two integration tests using real WebSocket clients against temporary loopback servers. They cover creation, joining, state relay, map/night synchronization, car changes, host disconnect, cleanup, invalid codes, origin rejection, and the health endpoint.
+`npm run test:multiplayer` runs three integration tests using real WebSocket clients against temporary loopback servers. They cover creation, joining, state relay, map/night synchronization, car changes, host disconnect, cleanup, invalid codes, origin rejection, and the health endpoint. A separate-host check verifies the Vercel origin can read server health and establish WebSocket connections, while unrelated origins do not receive CORS access.
 
 `npm run build` produces the static frontend. The main bundle is approximately 175 KB compressed. Vite may report an advisory for the uncompressed Three.js bundle exceeding 500 KB; this is not a build failure.
 

@@ -1,0 +1,16 @@
+# One persistent process owns all rooms. Do not enable replicas/autoscaling.
+services:
+  - type: web
+    name: elsewhere-rooms
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: ALLOWED_ORIGINS
+        value: https://elsewhere-gules.vercel.app

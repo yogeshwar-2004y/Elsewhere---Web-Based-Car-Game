@@ -7,10 +7,14 @@ import { RoomHub } from './rooms.js';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../dist');
 const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.svg':'image/svg+xml','.png':'image/png','.woff2':'font/woff2','.ico':'image/x-icon'};
-export function createServer({staticDir=root,allowedOrigins=(process.env.ALLOWED_ORIGINS||'').split(',').filter(Boolean)}={}){
+export function createServer({staticDir=root,allowedOrigins=(process.env.ALLOWED_ORIGINS||'').split(',').map(origin=>origin.trim()).filter(Boolean)}={}){
   const hub=new RoomHub();
   const server=http.createServer(async(req,res)=>{
-    if(req.url==='/health'){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end('{"ok":true}');return;}
+    if(req.url==='/health'){
+      const headers={'Content-Type':'application/json','Cache-Control':'no-store','Vary':'Origin'};
+      if(allowedOrigins.includes(req.headers.origin))headers['Access-Control-Allow-Origin']=req.headers.origin;
+      res.writeHead(200,headers);res.end(JSON.stringify({ok:true,service:'elsewhere-rooms'}));return;
+    }
     if(req.method!=='GET'&&req.method!=='HEAD'){res.writeHead(405);res.end();return;}
     try{
       const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);

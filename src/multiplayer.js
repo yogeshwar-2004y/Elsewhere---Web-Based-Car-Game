@@ -1,4 +1,5 @@
 import { settingsFrom, stateFrom, cleanName, CARS } from '../shared/protocol.js';
+import { multiplayerEndpoint, checkRoomServer } from './multiplayer-endpoint.js';
 
 export class Multiplayer {
   constructor({onRoom,onStates,onStatus}){this.onRoom=onRoom;this.onStates=onStates;this.onStatus=onStatus;this.socket=null;this.room=null;this.id=null;this.lastSent=0;this.pending=null;}
@@ -6,7 +7,20 @@ export class Multiplayer {
   async connect(type,{name,car,settings,code}){
     this.leave(false);
     this.onStatus('connecting','Finding your shared road…');
-    const url=import.meta.env.VITE_MULTIPLAYER_URL||`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/room`;
+    const attempt=new AbortController();this.attempt=attempt;
+    const waking=setTimeout(()=>{if(this.attempt===attempt)this.onStatus('connecting','Waking up the shared road… the first connection can take about a minute.');},5000);
+    const deadline=setTimeout(()=>attempt.abort(),90000);
+    let url;
+    try{
+      const endpoint=multiplayerEndpoint(import.meta.env.VITE_MULTIPLAYER_URL,location.href);
+      await checkRoomServer(endpoint.healthUrl,attempt.signal);url=endpoint.socketUrl;
+      if(attempt.signal.aborted)throw new Error('Connection cancelled.');
+    }catch(error){
+      const message=attempt.signal.aborted?'The multiplayer connection was cancelled or took too long. Try again, or continue solo.':error.message;
+      if(this.attempt===attempt){this.attempt=null;this.onStatus('offline',message);}
+      throw new Error(message);
+    }finally{clearTimeout(waking);clearTimeout(deadline);}
+    this.attempt=null;
     return new Promise((resolve,reject)=>{
       let socket;
       const fail=message=>{if(socket&&this.socket!==socket)return;clearTimeout(this.timeout);this.pending=null;this.socket=null;socket?.close();this.onStatus('offline',message);reject(new Error(message));};
@@ -50,6 +64,7 @@ export class Multiplayer {
   configure(settings){if(this.isHost)this.send({type:'configure',settings});}
   setCar(car){if(this.room)this.send({type:'profile',car});}
   leave(notify=true){
+    this.attempt?.abort();this.attempt=null;
     clearTimeout(this.timeout);const previous=this.room,socket=this.socket,pending=this.pending;
     this.socket=null;this.pending=null;this.room=null;this.id=null;
     if(socket){if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:'leave'}));socket.close();}
